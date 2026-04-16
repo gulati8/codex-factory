@@ -61,7 +61,7 @@ function renderDashboard(missions: ReturnType<MissionService["listMissions"]>): 
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>Solo Factory Dashboard</title>
+      <title>Codex Factory Dashboard</title>
       <style>
         :root {
           color-scheme: light;
@@ -111,7 +111,7 @@ function renderDashboard(missions: ReturnType<MissionService["listMissions"]>): 
     </head>
     <body>
       <main>
-        <h1>Solo Factory</h1>
+        <h1>Codex Factory</h1>
         <p>Explicit mission state, bounded workers, and policy-routed quality gates.</p>
         <section class="grid">
           ${cards || "<p>No missions yet.</p>"}
@@ -187,6 +187,10 @@ export async function buildApp() {
     manifests: manifestStore.list().length,
     missions: missionService.listMissions().length,
   }));
+
+  app.get("/", async (_, reply) => {
+    reply.redirect("/dashboard");
+  });
 
   app.get("/dashboard", async (_, reply) => {
     reply.type("text/html").send(renderDashboard(missionService.listMissions()));

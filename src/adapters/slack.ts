@@ -307,14 +307,14 @@ export function formatMissionSlackMessage(params: {
 export function formatSlackHelpMessage(): SlackMessage {
   return {
     response_type: "ephemeral",
-    text: "Solo Factory Slack help",
+    text: "Codex Factory Slack help",
     blocks: [
       {
         type: "section",
         text: {
           type: "mrkdwn",
           text:
-            "*Solo Factory*\nUse one of these forms:\n- `<projectId> <request>`\n- `status <missionId>`\n- `approve <missionId>`\n- `retry <missionId> <stageId>`\n- `escalate <missionId> <stageId> <summary>`",
+            "*Codex Factory*\nUse one of these forms:\n- `<projectId> <request>`\n- `status <missionId>`\n- `approve <missionId>`\n- `retry <missionId> <stageId>`\n- `escalate <missionId> <stageId> <summary>`",
         },
       },
     ],

@@ -24,6 +24,14 @@ export class ArtifactStore {
     return path.join(this.artifactDirForStage(missionId, stageId), "stage-prompt.md");
   }
 
+  public deliveryPatchPathForStage(missionId: string, stageId: string): string {
+    return path.join(this.artifactDirForStage(missionId, stageId), "delivery.patch");
+  }
+
+  public deliveryChangedPathsPathForStage(missionId: string, stageId: string): string {
+    return path.join(this.artifactDirForStage(missionId, stageId), "delivery-paths.json");
+  }
+
   public async initStage(mission: Mission, stage: MissionStage, envelope: WorkerEnvelope): Promise<string> {
     const artifactDir = this.artifactDirForStage(mission.id, stage.id);
     await mkdir(artifactDir, { recursive: true });
@@ -53,6 +61,40 @@ export class ArtifactStore {
     const promptPath = this.stagePromptPathForStage(stageRun.missionId, stageRun.stageId);
     await writeFile(promptPath, prompt);
     return promptPath;
+  }
+
+  public async writeDeliveryBundle(
+    stageRun: StageRun,
+    payload: {
+      patch: string;
+      changedPaths: string[];
+    },
+  ): Promise<void> {
+    await mkdir(stageRun.artifactDir, { recursive: true });
+    await writeFile(this.deliveryPatchPathForStage(stageRun.missionId, stageRun.stageId), payload.patch, "utf8");
+    await writeFile(
+      this.deliveryChangedPathsPathForStage(stageRun.missionId, stageRun.stageId),
+      JSON.stringify(payload.changedPaths, null, 2),
+      "utf8",
+    );
+  }
+
+  public async readDeliveryBundle(
+    stageRun: StageRun,
+  ): Promise<{ patch: string; changedPaths: string[] } | null> {
+    try {
+      const [patch, changedPathsRaw] = await Promise.all([
+        readFile(this.deliveryPatchPathForStage(stageRun.missionId, stageRun.stageId), "utf8"),
+        readFile(this.deliveryChangedPathsPathForStage(stageRun.missionId, stageRun.stageId), "utf8"),
+      ]);
+
+      return {
+        patch,
+        changedPaths: JSON.parse(changedPathsRaw) as string[],
+      };
+    } catch {
+      return null;
+    }
   }
 
   public async writeEvidence(stageRun: StageRun, evidence: { summary: string; details: Record<string, unknown> }): Promise<void> {

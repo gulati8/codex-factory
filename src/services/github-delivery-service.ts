@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import type { AppConfig } from "../config.js";
 import type { Mission, MissionEvent, ProjectManifest, StageRun } from "../domain/types.js";
+import { ArtifactStore } from "./artifact-store.js";
 import type { MissionService } from "./mission-service.js";
 
 const execFileAsync = promisify(execFile);
@@ -126,11 +127,13 @@ export function selectDeliveryPathWinners(candidates: DeliveryPathCandidate[]): 
 export class GitHubDeliveryService {
   private readonly config: AppConfig;
   private readonly missionService: MissionService;
+  private readonly artifactStore: ArtifactStore;
   private readonly inFlightMissionIds = new Set<string>();
 
   public constructor(config: AppConfig, missionService: MissionService) {
     this.config = config;
     this.missionService = missionService;
+    this.artifactStore = new ArtifactStore(config);
   }
 
   public async reconcileCompletedMissions(manifests: ProjectManifest[]): Promise<void> {
@@ -336,6 +339,11 @@ export class GitHubDeliveryService {
   }
 
   private async buildPatch(stageRun: StageRun, changedPaths: string[]): Promise<string> {
+    const bundle = await this.artifactStore.readDeliveryBundle(stageRun);
+    if (bundle) {
+      return bundle.patch;
+    }
+
     const result = await execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--binary", "HEAD", "--", ...changedPaths], {
       timeout: this.config.STAGE_TIMEOUT_MS,
       maxBuffer: 1024 * 1024 * 8,
@@ -344,6 +352,11 @@ export class GitHubDeliveryService {
   }
 
   private async listChangedPaths(stageRun: StageRun): Promise<string[]> {
+    const bundle = await this.artifactStore.readDeliveryBundle(stageRun);
+    if (bundle) {
+      return bundle.changedPaths;
+    }
+
     const result = await execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--name-only", "HEAD"], {
       timeout: this.config.STAGE_TIMEOUT_MS,
       maxBuffer: 1024 * 1024,

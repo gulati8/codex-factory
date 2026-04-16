@@ -103,6 +103,8 @@ export const missionEventSchema = z.object({
   missionId: z.string(),
   type: z.enum([
     "mission.created",
+    "mission.pr_opened",
+    "mission.delivery_failed",
     "plan.approved",
     "mission.dispatched",
     "stage.started",
@@ -173,6 +175,8 @@ export const projectManifestSchema = z.object({
           channelNames: z.array(z.string()).default([]),
           events: z.array(missionEventSchema.shape.type).default([
             "mission.created",
+            "mission.pr_opened",
+            "mission.delivery_failed",
             "plan.approved",
             "stage.failed",
             "stage.retry_scheduled",
@@ -182,7 +186,15 @@ export const projectManifestSchema = z.object({
         .default({
           channelIds: [],
           channelNames: [],
-          events: ["mission.created", "plan.approved", "stage.failed", "stage.retry_scheduled", "stage.escalated"],
+          events: [
+            "mission.created",
+            "mission.pr_opened",
+            "mission.delivery_failed",
+            "plan.approved",
+            "stage.failed",
+            "stage.retry_scheduled",
+            "stage.escalated",
+          ],
         }),
     })
     .default({
@@ -194,7 +206,15 @@ export const projectManifestSchema = z.object({
       notifications: {
         channelIds: [],
         channelNames: [],
-        events: ["mission.created", "plan.approved", "stage.failed", "stage.retry_scheduled", "stage.escalated"],
+        events: [
+          "mission.created",
+          "mission.pr_opened",
+          "mission.delivery_failed",
+          "plan.approved",
+          "stage.failed",
+          "stage.retry_scheduled",
+          "stage.escalated",
+        ],
       },
     }),
   agentRunner: agentRunnerSchema.optional(),

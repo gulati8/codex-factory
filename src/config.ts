@@ -7,6 +7,7 @@ const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
   DATA_FILE: z.string().default("./data/state.json"),
   POSTGRES_URL: z.string().optional(),
+  GITHUB_TOKEN: z.string().optional(),
   MANIFESTS_DIR: z.string().default("./manifests"),
   ARTIFACTS_DIR: z.string().default("./runtime/artifacts"),
   DEFAULT_WORKTREE_ROOT: z.string().default("./runtime/worktrees"),

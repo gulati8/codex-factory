@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
 import type { AppConfig } from "../config.js";
 import type { Mission, MissionStage, ProjectManifest, StageRun } from "../domain/types.js";
 import type { StateStore } from "../store/state-store.js";
@@ -6,6 +9,8 @@ import { StageExecutor } from "./stage-executor.js";
 import type { MissionService } from "./mission-service.js";
 import { WorkspaceManager } from "./workspace-manager.js";
 import { WorkerRuntime, type WorkerEnvelope } from "./worker-runtime.js";
+
+const execFileAsync = promisify(execFile);
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -70,6 +75,10 @@ export class WorkerLauncher {
         summary: result.summary,
       };
 
+      if (result.status === "completed" && !["qa", "integrate"].includes(stage.kind)) {
+        await this.captureDeliveryBundle(finishedRun);
+      }
+
       await this.artifactStore.writeEvidence(finishedRun, {
         summary: result.summary,
         details: result.details,
@@ -123,5 +132,26 @@ export class WorkerLauncher {
 
   private shouldRetry(stage: MissionStage, manifest: ProjectManifest, attempt: number): boolean {
     return manifest.retry.retryableStages.includes(stage.kind) && attempt < manifest.retry.maxAttempts;
+  }
+
+  private async captureDeliveryBundle(stageRun: StageRun): Promise<void> {
+    const [patchResult, changedPathsResult] = await Promise.all([
+      execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--binary", "HEAD"], {
+        maxBuffer: 1024 * 1024 * 8,
+      }),
+      execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--name-only", "HEAD"], {
+        maxBuffer: 1024 * 1024,
+      }),
+    ]);
+
+    const changedPaths = changedPathsResult.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    await this.artifactStore.writeDeliveryBundle(stageRun, {
+      patch: patchResult.stdout,
+      changedPaths,
+    });
   }
 }

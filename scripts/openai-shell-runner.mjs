@@ -52,34 +52,37 @@ function requireEnv(name) {
   return value;
 }
 
-function truncate(value, limit = 4_000) {
-  if (value.length <= limit) {
-    return value;
-  }
-
-  return `${value.slice(0, limit - 16)}\n...[truncated]`;
-}
-
 function extractShellCalls(response) {
   const items = Array.isArray(response.output) ? response.output : [];
   return items.filter((item) => item?.type === "shell_call");
 }
 
-function extractCommand(shellCall) {
-  return (
+function extractCommands(shellCall) {
+  const shellCommands = shellCall?.action?.commands;
+  if (Array.isArray(shellCommands)) {
+    return shellCommands.map((command) => String(command).trim()).filter(Boolean);
+  }
+
+  const legacyCommand =
     shellCall?.action?.command ||
     shellCall?.command ||
     shellCall?.input?.command ||
     shellCall?.input ||
-    ""
-  );
+    "";
+
+  if (Array.isArray(legacyCommand)) {
+    return legacyCommand.map((command) => String(command).trim()).filter(Boolean);
+  }
+
+  const command = String(legacyCommand).trim();
+  return command ? [command] : [];
 }
 
 function isBlocked(command) {
   return BLOCKED_PATTERNS.some((pattern) => pattern.test(command));
 }
 
-async function runCommand(command, cwd) {
+async function runCommand(command, cwd, timeoutMs) {
   if (isBlocked(command)) {
     return {
       stdout: "",
@@ -92,7 +95,7 @@ async function runCommand(command, cwd) {
   try {
     const { stdout, stderr } = await exec(command, {
       cwd,
-      timeout: COMMAND_TIMEOUT_MS,
+      timeout: timeoutMs,
       maxBuffer: 1024 * 1024,
       env: process.env,
     });
@@ -191,34 +194,42 @@ async function main() {
 
     const outputs = [];
     for (const shellCall of shellCalls) {
-      const command = extractCommand(shellCall).trim();
+      const commands = extractCommands(shellCall);
       const callId = shellCall?.call_id || shellCall?.id;
-      if (!command || !callId) {
+      const timeoutMs =
+        typeof shellCall?.action?.timeout_ms === "number" ? shellCall.action.timeout_ms : COMMAND_TIMEOUT_MS;
+      const maxOutputLength =
+        typeof shellCall?.action?.max_output_length === "number" ? shellCall.action.max_output_length : undefined;
+
+      if (commands.length === 0 || !callId) {
         continue;
       }
 
-      const result = await runCommand(command, workspacePath);
-      turns.push({
-        command,
-        outcome: result.timedOut ? "timeout" : `exit:${result.exitCode ?? "unknown"}`,
-      });
+      const output = [];
+      for (const command of commands) {
+        const result = await runCommand(command, workspacePath, timeoutMs);
+        turns.push({
+          command,
+          outcome: result.timedOut ? "timeout" : `exit:${result.exitCode ?? "unknown"}`,
+        });
+
+        output.push({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          outcome: result.timedOut
+            ? { type: "timeout" }
+            : {
+                type: "exit",
+                exit_code: Number.isInteger(result.exitCode) ? result.exitCode : 1,
+              },
+        });
+      }
 
       outputs.push({
         type: "shell_call_output",
         call_id: callId,
-        max_output_length: 4096,
-        output: [
-          {
-            stdout: truncate(result.stdout),
-            stderr: truncate(result.stderr),
-            outcome: result.timedOut
-              ? { type: "timeout" }
-              : {
-                  type: "exit",
-                  exit_code: Number.isInteger(result.exitCode) ? result.exitCode : 1,
-                },
-          },
-        ],
+        ...(maxOutputLength ? { max_output_length: maxOutputLength } : {}),
+        output,
       });
     }
 

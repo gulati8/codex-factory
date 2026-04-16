@@ -33,6 +33,16 @@ type DeliveryPathSelection = {
   selectedPaths: string[];
 };
 
+export function buildGitApplyArgs(patchPath: string, selectedPaths: string[]): string[] {
+  return [
+    "apply",
+    "--3way",
+    "--whitespace=nowarn",
+    ...selectedPaths.map((selectedPath) => `--include=${selectedPath}`),
+    patchPath,
+  ];
+}
+
 function stagePriority(stageKind: StageRun["stageKind"]): number {
   switch (stageKind) {
     case "implement":
@@ -268,12 +278,16 @@ export class GitHubDeliveryService {
           continue;
         }
 
-        const patchPath = path.join(deliveryDir, `${selection.stageRun.stageId}.patch`);
-        await writeFile(patchPath, patch, "utf8");
-        await execFileAsync("git", ["-C", deliveryDir, "apply", "--3way", "--whitespace=nowarn", patchPath], {
-          timeout: this.config.STAGE_TIMEOUT_MS,
-          maxBuffer: 1024 * 1024 * 8,
-        });
+        const patchPath = path.join(os.tmpdir(), `codex-factory-delivery-${selection.stageRun.stageId}.patch`);
+        try {
+          await writeFile(patchPath, patch, "utf8");
+          await execFileAsync("git", ["-C", deliveryDir, ...buildGitApplyArgs(patchPath, selection.selectedPaths)], {
+            timeout: this.config.STAGE_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024 * 8,
+          });
+        } finally {
+          await rm(patchPath, { force: true });
+        }
       }
 
       const status = await execFileAsync("git", ["-C", deliveryDir, "status", "--short"], {

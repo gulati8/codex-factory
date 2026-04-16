@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { StageRun } from "../src/domain/types.js";
-import { injectGitHubToken, parseGitHubRepo, selectDeliveryPathWinners } from "../src/services/github-delivery-service.js";
+import {
+  buildGitApplyArgs,
+  injectGitHubToken,
+  parseGitHubRepo,
+  selectDeliveryPathWinners,
+} from "../src/services/github-delivery-service.js";
 
 function makeStageRun(input: Partial<StageRun> & Pick<StageRun, "stageId" | "stageKind">): StageRun {
   return {
@@ -72,6 +77,17 @@ describe("GitHubDeliveryService helpers", () => {
         stageRun: docs,
         selectedPaths: ["README.md"],
       },
+    ]);
+  });
+
+  it("builds git apply args that scope bundle patches to the selected repo paths", () => {
+    expect(buildGitApplyArgs("/tmp/delivery.patch", ["README.md", "src/app.ts"])).toEqual([
+      "apply",
+      "--3way",
+      "--whitespace=nowarn",
+      "--include=README.md",
+      "--include=src/app.ts",
+      "/tmp/delivery.patch",
     ]);
   });
 });

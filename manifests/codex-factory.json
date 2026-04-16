@@ -5,7 +5,7 @@
   "runtimeContainer": "node:22-bookworm-slim",
   "maxParallelWorkers": 2,
   "commands": {
-    "install": "npm install",
+    "install": "npm ci --include=dev",
     "lint": "npm run typecheck",
     "test": "npm test",
     "build": "npm run build"

@@ -18,24 +18,22 @@ const REQUIRED_ENV = [
   "FACTORY_STAGE_PROMPT_PATH",
 ];
 
-const BLOCKED_PATTERNS = [
-  /\bsudo\b/i,
-  /\bssh\b/i,
-  /\bscp\b/i,
-  /\bsftp\b/i,
-  /\bcurl\b/i,
-  /\bwget\b/i,
-  /\bnc\b/i,
-  /\bncat\b/i,
-  /\btelnet\b/i,
-  /\bdocker\b/i,
-  /\bkubectl\b/i,
-  /\baws\b/i,
-  /\bgh\b/i,
-  /\bgit\s+push\b/i,
-  /\brm\s+-rf\s+\/\b/i,
-  /\bshutdown\b/i,
-  /\breboot\b/i,
+const BLOCKED_EXECUTABLES = [
+  "sudo",
+  "ssh",
+  "scp",
+  "sftp",
+  "curl",
+  "wget",
+  "nc",
+  "ncat",
+  "telnet",
+  "docker",
+  "kubectl",
+  "aws",
+  "gh",
+  "shutdown",
+  "reboot",
 ];
 
 const MAX_TURNS = Number(process.env.FACTORY_OPENAI_MAX_TURNS || 12);
@@ -78,8 +76,39 @@ function extractCommands(shellCall) {
   return command ? [command] : [];
 }
 
+function stripSegmentPrefix(segment) {
+  let remaining = segment.trim();
+  if (remaining.startsWith("env ")) {
+    remaining = remaining.slice(4).trimStart();
+  }
+
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(remaining)) {
+    remaining = remaining.replace(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)\s*/, "");
+  }
+
+  if (remaining.startsWith("command ")) {
+    remaining = remaining.slice(8).trimStart();
+  }
+
+  return remaining;
+}
+
 function isBlocked(command) {
-  return BLOCKED_PATTERNS.some((pattern) => pattern.test(command));
+  if (/\brm\s+-rf\s+\/(?:\s|$)/i.test(command)) {
+    return true;
+  }
+
+  return command
+    .split(/(?:&&|\|\||;|\n)/)
+    .map((segment) => stripSegmentPrefix(segment))
+    .filter(Boolean)
+    .some((segment) => {
+      if (/^git\s+push(?:\s|$)/i.test(segment)) {
+        return true;
+      }
+
+      return BLOCKED_EXECUTABLES.some((name) => new RegExp(`^${name}(?:\\s|$)`, "i").test(segment));
+    });
 }
 
 async function runCommand(command, cwd, timeoutMs) {

@@ -74,6 +74,24 @@ export class AgentRunner {
         await context.artifactStore.appendStageLog(context.stageRun, result.stderr.trim());
       }
 
+      const validationError = await this.validateStageResult(context);
+      if (validationError) {
+        await context.artifactStore.appendStageLog(context.stageRun, validationError);
+        return {
+          status: "failed",
+          summary: validationError,
+          details: {
+            command: runner.command,
+            args,
+            promptPath,
+            missionPacketPath,
+            workspace: context.workspace.path,
+            mode: context.workspace.mode,
+            validationError,
+          },
+        };
+      }
+
       return {
         status: "completed",
         summary: `External agent runner completed ${context.stage.label}.`,
@@ -102,6 +120,34 @@ export class AgentRunner {
         },
       };
     }
+  }
+
+  private async validateStageResult(context: AgentExecutionContext): Promise<string | null> {
+    if (!["implement", "docs", "architect", "security"].includes(context.stage.kind)) {
+      return null;
+    }
+
+    const workstream = context.stage.workstreamId
+      ? context.mission.plan.workstreams.find((candidate) => candidate.id === context.stage.workstreamId)
+      : undefined;
+    const paths = workstream?.paths.filter(Boolean) ?? [];
+    if (paths.length === 0) {
+      return null;
+    }
+
+    try {
+      const { stdout } = await execFileAsync("git", ["status", "--short", "--", ...paths], {
+        cwd: context.workspace.path,
+        env: process.env,
+      });
+      if (stdout.trim()) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+
+    return `External agent runner completed ${context.stage.label} without changing assigned paths.`;
   }
 
   private buildEnv(runner: AgentRunnerConfig, substitutions: Record<string, string>): NodeJS.ProcessEnv {

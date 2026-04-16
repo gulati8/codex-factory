@@ -1,4 +1,4 @@
-import { access, mkdir, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -23,8 +23,10 @@ export class WorkspaceManager {
 
   public async prepare(manifest: ProjectManifest, envelope: WorkerEnvelope): Promise<WorkspaceLease> {
     await mkdir(path.dirname(envelope.worktreePath), { recursive: true });
+    const hasGitRepo = await this.hasGitRepo(manifest.repoPath);
+    await this.resetWorkspace(manifest.repoPath, envelope.worktreePath, hasGitRepo);
 
-    if (await this.hasGitRepo(manifest.repoPath)) {
+    if (hasGitRepo) {
       await execFileAsync("git", ["-C", manifest.repoPath, "worktree", "add", "--detach", envelope.worktreePath, "HEAD"]);
       await this.installDependencies(manifest, envelope.worktreePath);
       return {
@@ -48,6 +50,18 @@ export class WorkspaceManager {
       path: envelope.worktreePath,
       mode: "ephemeral",
     };
+  }
+
+  private async resetWorkspace(repoPath: string, workspacePath: string, hasGitRepo: boolean): Promise<void> {
+    if (hasGitRepo) {
+      try {
+        await execFileAsync("git", ["-C", repoPath, "worktree", "remove", "--force", workspacePath]);
+      } catch {
+        // Ignore cleanup misses; the workspace may only exist on disk.
+      }
+    }
+
+    await rm(workspacePath, { recursive: true, force: true });
   }
 
   private async hasGitRepo(repoPath: string): Promise<boolean> {

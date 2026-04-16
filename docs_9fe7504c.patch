@@ -1,0 +1,12 @@
+diff --git a/README.md b/README.md
+index 97a22b0..cd9db0d 100644
+--- a/README.md
++++ b/README.md
+@@ -13,6 +13,7 @@
+ - Background queue and launcher that execute ready stages
+ - Artifact and evidence bundles persisted per mission stage
+ - External agent-runner adapter with manifest-driven command execution
++- Optional GitHub pull request publishing after successful runs
+ - Automatic and manual retry paths for bounded stage recovery
+ - Slack slash-command intake endpoint
+ - Slack Socket Mode bridge that forwards slash commands and interactive actions into the same control-plane routes

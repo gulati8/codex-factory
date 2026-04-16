@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { exec } from "node:child_process/promises";
+import { exec as execCallback } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import OpenAI from "openai";
 
@@ -40,6 +41,7 @@ const BLOCKED_PATTERNS = [
 const MAX_TURNS = Number(process.env.FACTORY_OPENAI_MAX_TURNS || 12);
 const COMMAND_TIMEOUT_MS = Number(process.env.FACTORY_OPENAI_COMMAND_TIMEOUT_MS || 120_000);
 const MODEL = process.env.FACTORY_OPENAI_MODEL || "gpt-5.2-codex";
+const exec = promisify(execCallback);
 
 function requireEnv(name) {
   const value = process.env[name];

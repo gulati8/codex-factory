@@ -1,0 +1,81 @@
+{
+  "projectId": "client-portal",
+  "displayName": "Client Portal",
+  "repoPath": "/repos/client-portal",
+  "runtimeContainer": "node:22-bookworm-slim",
+  "maxParallelWorkers": 3,
+  "commands": {
+    "install": "npm install",
+    "lint": "npm run lint",
+    "test": "npm run test",
+    "build": "npm run build"
+  },
+  "approval": {
+    "requirePlanApproval": true,
+    "allowRiskBasedAutonomy": true,
+    "allowFireAndForget": true
+  },
+  "slack": {
+    "allowedChannelIds": [],
+    "allowedChannels": [],
+    "operatorUsers": [],
+    "approverUsers": [],
+    "responseType": "ephemeral",
+    "notifications": {
+      "channelIds": [],
+      "channelNames": [],
+      "events": [
+        "mission.created",
+        "plan.approved",
+        "stage.failed",
+        "stage.retry_scheduled",
+        "stage.escalated"
+      ]
+    }
+  },
+  "agentRunner": {
+    "enabled": false,
+    "command": "node",
+    "args": [
+      "{serviceRoot}/scripts/example-agent-runner.mjs"
+    ],
+    "env": {},
+    "stages": [
+      "implement",
+      "review",
+      "docs"
+    ]
+  },
+  "retry": {
+    "maxAttempts": 2,
+    "retryableStages": [
+      "implement",
+      "review",
+      "docs",
+      "qa",
+      "integrate"
+    ]
+  },
+  "risk": {
+    "highRiskGlobs": [
+      "src/auth/**",
+      "src/payments/**",
+      "db/migrations/**",
+      ".github/workflows/**"
+    ],
+    "architectureGlobs": [
+      "src/domain/**",
+      "db/schema/**",
+      "db/migrations/**"
+    ],
+    "securityGlobs": [
+      "src/auth/**",
+      "src/security/**",
+      "infra/secrets/**"
+    ],
+    "docsGlobs": [
+      "docs/**",
+      "src/api/**"
+    ]
+  }
+}

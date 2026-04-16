@@ -1,0 +1,27 @@
+services:
+  solo-factory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./runtime:/app/runtime
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: solo_factory
+      POSTGRES_PASSWORD: solo_factory
+      POSTGRES_DB: solo_factory
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:

@@ -1,0 +1,96 @@
+{
+  "projectId": "codex-factory",
+  "displayName": "Codex Factory",
+  "repoPath": "/workspace/repo",
+  "runtimeContainer": "node:22-bookworm-slim",
+  "maxParallelWorkers": 2,
+  "commands": {
+    "install": "npm install",
+    "lint": "npm run typecheck",
+    "test": "npm test",
+    "build": "npm run build"
+  },
+  "approval": {
+    "requirePlanApproval": true,
+    "allowRiskBasedAutonomy": true,
+    "allowFireAndForget": false
+  },
+  "slack": {
+    "allowedChannelIds": [],
+    "allowedChannels": [],
+    "operatorUsers": [
+      "gulati8@gmail.com"
+    ],
+    "approverUsers": [
+      "gulati8@gmail.com"
+    ],
+    "responseType": "ephemeral",
+    "notifications": {
+      "channelIds": [],
+      "channelNames": [],
+      "events": [
+        "mission.created",
+        "plan.approved",
+        "stage.failed",
+        "stage.retry_scheduled",
+        "stage.escalated"
+      ]
+    }
+  },
+  "agentRunner": {
+    "enabled": true,
+    "command": "node",
+    "args": [
+      "{serviceRoot}/scripts/openai-shell-runner.mjs"
+    ],
+    "env": {
+      "FACTORY_OPENAI_MODEL": "gpt-5.2-codex",
+      "FACTORY_OPENAI_COMMAND_TIMEOUT_MS": "120000",
+      "FACTORY_OPENAI_MAX_TURNS": "12"
+    },
+    "stages": [
+      "architect",
+      "implement",
+      "review",
+      "docs",
+      "security"
+    ]
+  },
+  "retry": {
+    "maxAttempts": 2,
+    "retryableStages": [
+      "architect",
+      "implement",
+      "review",
+      "docs",
+      "qa",
+      "integrate",
+      "security"
+    ]
+  },
+  "risk": {
+    "highRiskGlobs": [
+      ".github/workflows/**",
+      "deploy/**",
+      "docker-compose*.yml",
+      "Dockerfile",
+      "src/config.ts",
+      "src/store/**"
+    ],
+    "architectureGlobs": [
+      "src/domain/**",
+      "src/services/**",
+      "src/store/**"
+    ],
+    "securityGlobs": [
+      ".github/workflows/**",
+      "deploy/**",
+      "src/config.ts"
+    ],
+    "docsGlobs": [
+      "README.md",
+      "ARCHITECTURE.md",
+      "manifests/**"
+    ]
+  }
+}

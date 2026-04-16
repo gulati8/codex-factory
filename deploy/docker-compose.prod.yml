@@ -1,0 +1,46 @@
+name: codex-factory
+
+services:
+  codex-factory:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: codex-factory
+    restart: unless-stopped
+    env_file:
+      - /srv/codex-factory/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - /srv/codex-factory/data:/workspace/data
+      - /srv/codex-factory/runtime:/workspace/runtime
+      - /srv/codex-factory/repo:/workspace/repo
+    networks:
+      default: {}
+      proxy:
+        aliases:
+          - codex-factory
+
+  postgres:
+    image: postgres:16-bookworm
+    container_name: codex-factory-postgres
+    restart: unless-stopped
+    env_file:
+      - /srv/codex-factory/.env
+    environment:
+      POSTGRES_USER: solo_factory
+      POSTGRES_PASSWORD: ${FACTORY_POSTGRES_PASSWORD}
+      POSTGRES_DB: solo_factory
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U solo_factory -d solo_factory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - /srv/codex-factory/postgres:/var/lib/postgresql/data
+
+networks:
+  proxy:
+    external: true
+    name: proxy

@@ -36,6 +36,7 @@ describe("loadConfig", () => {
       "utf8",
     );
     process.chdir(tmpDir);
+    delete process.env.PORT;
     delete process.env.SLACK_SIGNING_SECRET;
     process.env.SLACK_BOT_TOKEN = "from-process";
 

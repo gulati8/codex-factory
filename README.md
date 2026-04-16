@@ -13,6 +13,7 @@
 - Background queue and launcher that execute ready stages
 - Artifact and evidence bundles persisted per mission stage
 - External agent-runner adapter with manifest-driven command execution
+- Automatic GitHub pull request delivery for successful missions
 - Automatic and manual retry paths for bounded stage recovery
 - Slack slash-command intake endpoint
 - Slack Socket Mode bridge that forwards slash commands and interactive actions into the same control-plane routes

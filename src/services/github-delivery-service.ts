@@ -75,6 +75,19 @@ export function injectGitHubToken(remoteUrl: string, token: string): string {
   return remoteUrl.replace("https://github.com/", `https://x-access-token:${token}@github.com/`);
 }
 
+function redactSecrets(message: string, secrets: Array<string | undefined>): string {
+  let redacted = message;
+  for (const secret of secrets) {
+    if (!secret) {
+      continue;
+    }
+
+    redacted = redacted.split(secret).join("[REDACTED]");
+  }
+
+  return redacted;
+}
+
 export function selectDeliveryPathWinners(candidates: DeliveryPathCandidate[]): DeliveryPathSelection[] {
   const claimedPaths = new Set<string>();
   const selected: DeliveryPathSelection[] = [];
@@ -182,7 +195,9 @@ export class GitHubDeliveryService {
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown delivery failure";
+      const message = redactSecrets(error instanceof Error ? error.message : "Unknown delivery failure", [
+        this.config.GITHUB_TOKEN,
+      ]);
       await this.missionService.recordMissionEvent(mission.id, {
         type: "mission.delivery_failed",
         actor: "delivery",
@@ -242,6 +257,10 @@ export class GitHubDeliveryService {
         timeout: this.config.STAGE_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
       });
+      await execFileAsync("git", ["-C", deliveryDir, "remote", "set-url", "origin", injectGitHubToken(remoteUrl, githubToken)], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
 
       for (const selection of deliverySelections) {
         const patch = await this.buildPatch(selection.stageRun, selection.selectedPaths);
@@ -283,7 +302,7 @@ export class GitHubDeliveryService {
       });
       await execFileAsync(
         "git",
-        ["-C", deliveryDir, "push", injectGitHubToken(remoteUrl, githubToken), `${branch}:${branch}`],
+        ["-C", deliveryDir, "push", "origin", `${branch}:${branch}`],
         {
           timeout: this.config.STAGE_TIMEOUT_MS,
           maxBuffer: 1024 * 1024 * 8,

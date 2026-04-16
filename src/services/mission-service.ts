@@ -67,6 +67,23 @@ export class MissionService {
     return this.store.listStageRuns(missionId, stageId);
   }
 
+  public async recordMissionEvent(
+    missionId: string,
+    input: {
+      type: MissionEventType;
+      actor: string;
+      summary: string;
+      metadata: Record<string, unknown>;
+    },
+  ): Promise<Mission> {
+    const mission = this.requireMission(missionId);
+    await this.emitMissionEvent(mission, {
+      ...input,
+      createdAt: nowIso(),
+    });
+    return this.requireMission(missionId);
+  }
+
   public async createMission(rawInput: CreateMissionInput, manifest: ProjectManifest): Promise<Mission> {
     const input = createMissionInputSchema.parse(rawInput);
     const route = this.policyEngine.evaluate({

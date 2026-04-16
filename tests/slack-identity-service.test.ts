@@ -9,6 +9,7 @@ const config: AppConfig = {
   HOST: "127.0.0.1",
   DATA_FILE: "./data/state.json",
   POSTGRES_URL: undefined,
+  GITHUB_TOKEN: undefined,
   MANIFESTS_DIR: "./manifests",
   ARTIFACTS_DIR: "./runtime/artifacts",
   DEFAULT_WORKTREE_ROOT: "./runtime/worktrees",

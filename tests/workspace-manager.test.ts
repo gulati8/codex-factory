@@ -32,6 +32,7 @@ describe("WorkspaceManager", () => {
       STAGE_TIMEOUT_MS: 5000,
       STATE_BACKEND: "file",
       POSTGRES_URL: undefined,
+      GITHUB_TOKEN: undefined,
       SLACK_SOCKET_MODE: false,
       SLACK_COMMAND_NAME: "/codex-factory",
       SLACK_APP_TOKEN: undefined,

@@ -1,0 +1,357 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+
+import type { AppConfig } from "../config.js";
+import type { Mission, MissionEvent, ProjectManifest, StageRun } from "../domain/types.js";
+import type { MissionService } from "./mission-service.js";
+
+const execFileAsync = promisify(execFile);
+
+type GitHubRepo = {
+  owner: string;
+  name: string;
+};
+
+type PullRequest = {
+  number: number;
+  html_url: string;
+  title: string;
+  state: string;
+};
+
+function stagePriority(stageKind: StageRun["stageKind"]): number {
+  switch (stageKind) {
+    case "implement":
+      return 10;
+    case "architect":
+      return 20;
+    case "security":
+      return 30;
+    case "docs":
+      return 40;
+    case "review":
+      return 50;
+    default:
+      return 100;
+  }
+}
+
+export function parseGitHubRepo(remoteUrl: string): GitHubRepo | null {
+  const normalized = remoteUrl.trim().replace(/\.git$/, "");
+  const sshMatch = normalized.match(/^git@github\.com:(?<owner>[^/]+)\/(?<name>[^/]+)$/);
+  if (sshMatch?.groups) {
+    return {
+      owner: sshMatch.groups.owner,
+      name: sshMatch.groups.name,
+    };
+  }
+
+  const httpsMatch = normalized.match(/^https:\/\/github\.com\/(?<owner>[^/]+)\/(?<name>[^/]+)$/);
+  if (httpsMatch?.groups) {
+    return {
+      owner: httpsMatch.groups.owner,
+      name: httpsMatch.groups.name,
+    };
+  }
+
+  return null;
+}
+
+export function injectGitHubToken(remoteUrl: string, token: string): string {
+  return remoteUrl.replace("https://github.com/", `https://x-access-token:${token}@github.com/`);
+}
+
+export class GitHubDeliveryService {
+  private readonly config: AppConfig;
+  private readonly missionService: MissionService;
+  private readonly inFlightMissionIds = new Set<string>();
+
+  public constructor(config: AppConfig, missionService: MissionService) {
+    this.config = config;
+    this.missionService = missionService;
+  }
+
+  public async reconcileCompletedMissions(manifests: ProjectManifest[]): Promise<void> {
+    for (const mission of this.missionService.listMissions()) {
+      if (mission.status !== "completed") {
+        continue;
+      }
+
+      const manifest = manifests.find((candidate) => candidate.projectId === mission.projectId);
+      if (!manifest) {
+        continue;
+      }
+
+      await this.deliverMission(mission, manifest);
+    }
+  }
+
+  public async deliverMission(mission: Mission, manifest: ProjectManifest): Promise<void> {
+    if (mission.status !== "completed" || !this.config.GITHUB_TOKEN) {
+      return;
+    }
+
+    const events = this.missionService.listEvents(mission.id);
+    if (events.some((event) => event.type === "mission.pr_opened")) {
+      return;
+    }
+
+    if (this.inFlightMissionIds.has(mission.id)) {
+      return;
+    }
+
+    this.inFlightMissionIds.add(mission.id);
+    try {
+      const result = await this.preparePullRequest(mission, manifest, events);
+      await this.missionService.recordMissionEvent(mission.id, {
+        type: "mission.pr_opened",
+        actor: "delivery",
+        summary: `Opened delivery PR #${result.number}.`,
+        metadata: {
+          branch: result.branch,
+          pullRequest: {
+            number: result.number,
+            url: result.url,
+            title: result.title,
+          },
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown delivery failure";
+      await this.missionService.recordMissionEvent(mission.id, {
+        type: "mission.delivery_failed",
+        actor: "delivery",
+        summary: message,
+        metadata: {},
+      });
+    } finally {
+      this.inFlightMissionIds.delete(mission.id);
+    }
+  }
+
+  private async preparePullRequest(
+    mission: Mission,
+    manifest: ProjectManifest,
+    events: MissionEvent[],
+  ): Promise<{ branch: string; number: number; title: string; url: string }> {
+    const githubToken = this.config.GITHUB_TOKEN;
+    if (!githubToken) {
+      throw new Error("GitHub delivery requires GITHUB_TOKEN.");
+    }
+
+    const remoteUrl = await this.getRemoteUrl(manifest.repoPath);
+    const repo = parseGitHubRepo(remoteUrl);
+    if (!repo) {
+      throw new Error(`Unsupported GitHub remote URL: ${remoteUrl}`);
+    }
+
+    const branch = `factory/${mission.id}`;
+    const existingPr = await this.findPullRequest(repo, branch);
+    if (existingPr) {
+      return {
+        branch,
+        number: existingPr.number,
+        title: existingPr.title,
+        url: existingPr.html_url,
+      };
+    }
+
+    const stageRuns = this.selectDeliveryStageRuns(mission.id);
+    if (stageRuns.length === 0) {
+      throw new Error("No completed delivery stage outputs were available to publish.");
+    }
+
+    const baseBranch = await this.getBaseBranch(manifest.repoPath);
+    const deliveryDir = await mkdtemp(path.join(os.tmpdir(), `codex-factory-delivery-${mission.id}-`));
+
+    try {
+      await execFileAsync("git", ["clone", manifest.repoPath, deliveryDir], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024 * 8,
+      });
+      await execFileAsync("git", ["-C", deliveryDir, "remote", "set-url", "origin", remoteUrl], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+      await execFileAsync("git", ["-C", deliveryDir, "checkout", "-b", branch], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+
+      for (const stageRun of stageRuns) {
+        const patch = await this.buildPatch(stageRun);
+        if (!patch.trim()) {
+          continue;
+        }
+
+        const patchPath = path.join(deliveryDir, `${stageRun.stageId}.patch`);
+        await writeFile(patchPath, patch, "utf8");
+        await execFileAsync("git", ["-C", deliveryDir, "apply", "--3way", "--whitespace=nowarn", patchPath], {
+          timeout: this.config.STAGE_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024 * 8,
+        });
+      }
+
+      const status = await execFileAsync("git", ["-C", deliveryDir, "status", "--short"], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+      if (!status.stdout.trim()) {
+        throw new Error("Mission delivery produced no publishable changes.");
+      }
+
+      await execFileAsync("git", ["-C", deliveryDir, "config", "user.name", "Codex Factory"], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+      await execFileAsync("git", ["-C", deliveryDir, "config", "user.email", "factory@gulatilabs.me"], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+      await execFileAsync("git", ["-C", deliveryDir, "add", "-A"], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+      await execFileAsync("git", ["-C", deliveryDir, "commit", "-m", `Factory mission ${mission.id}: ${mission.title}`], {
+        timeout: this.config.STAGE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+      await execFileAsync(
+        "git",
+        ["-C", deliveryDir, "push", injectGitHubToken(remoteUrl, githubToken), `${branch}:${branch}`],
+        {
+          timeout: this.config.STAGE_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024 * 8,
+        },
+      );
+
+      const createdPr = await this.createPullRequest(repo, {
+        title: `Factory mission: ${mission.title}`,
+        head: branch,
+        base: baseBranch,
+        body: this.buildPullRequestBody(mission, stageRuns, events),
+      });
+
+      return {
+        branch,
+        number: createdPr.number,
+        title: createdPr.title,
+        url: createdPr.html_url,
+      };
+    } finally {
+      await rm(deliveryDir, { recursive: true, force: true });
+    }
+  }
+
+  private selectDeliveryStageRuns(missionId: string): StageRun[] {
+    const stageRuns = this.missionService.listStageRuns(missionId);
+    const latestCompletedByStage = new Map<string, StageRun>();
+    for (const stageRun of stageRuns) {
+      if (stageRun.status !== "completed" || ["qa", "integrate"].includes(stageRun.stageKind)) {
+        continue;
+      }
+
+      const existing = latestCompletedByStage.get(stageRun.stageId);
+      if (!existing || existing.attempt < stageRun.attempt) {
+        latestCompletedByStage.set(stageRun.stageId, stageRun);
+      }
+    }
+
+    return [...latestCompletedByStage.values()].sort((left, right) => {
+      const kindDelta = stagePriority(left.stageKind) - stagePriority(right.stageKind);
+      if (kindDelta !== 0) {
+        return kindDelta;
+      }
+
+      return left.startedAt.localeCompare(right.startedAt);
+    });
+  }
+
+  private async buildPatch(stageRun: StageRun): Promise<string> {
+    const result = await execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--binary", "HEAD"], {
+      timeout: this.config.STAGE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024 * 8,
+    });
+    return result.stdout;
+  }
+
+  private async getRemoteUrl(repoPath: string): Promise<string> {
+    const result = await execFileAsync("git", ["-C", repoPath, "remote", "get-url", "origin"], {
+      timeout: this.config.STAGE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+    return result.stdout.trim();
+  }
+
+  private async getBaseBranch(repoPath: string): Promise<string> {
+    const head = await execFileAsync("git", ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"], {
+      timeout: this.config.STAGE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+    return head.stdout.trim() || "main";
+  }
+
+  private async findPullRequest(repo: GitHubRepo, branch: string): Promise<PullRequest | null> {
+    const response = await fetch(
+      `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls?head=${repo.owner}:${encodeURIComponent(branch)}&state=open`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${this.config.GITHUB_TOKEN}`,
+          "User-Agent": "codex-factory",
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Unable to list GitHub pull requests (${response.status}).`);
+    }
+
+    const pulls = (await response.json()) as PullRequest[];
+    return pulls[0] ?? null;
+  }
+
+  private async createPullRequest(
+    repo: GitHubRepo,
+    input: { title: string; body: string; head: string; base: string },
+  ): Promise<PullRequest> {
+    const response = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}/pulls`, {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${this.config.GITHUB_TOKEN}`,
+        "Content-Type": "application/json",
+        "User-Agent": "codex-factory",
+      },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Unable to create GitHub pull request (${response.status}): ${body}`);
+    }
+
+    return (await response.json()) as PullRequest;
+  }
+
+  private buildPullRequestBody(mission: Mission, stageRuns: StageRun[], events: MissionEvent[]): string {
+    const stageSummary = stageRuns.map((stageRun) => `- ${stageRun.stageKind}: ${stageRun.summary}`).join("\n");
+    const eventCount = events.length;
+    return [
+      `## Mission`,
+      mission.title,
+      "",
+      `## Request`,
+      mission.request,
+      "",
+      `## Delivery Notes`,
+      `- Mission ID: \`${mission.id}\``,
+      `- Risk level: \`${mission.riskLevel}\``,
+      `- Events recorded: ${eventCount}`,
+      "",
+      `## Applied Stage Outputs`,
+      stageSummary || "- No stage outputs were applied.",
+    ].join("\n");
+  }
+}

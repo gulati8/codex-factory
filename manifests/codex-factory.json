@@ -30,6 +30,8 @@
       "channelNames": [],
       "events": [
         "mission.created",
+        "mission.pr_opened",
+        "mission.delivery_failed",
         "plan.approved",
         "stage.failed",
         "stage.retry_scheduled",

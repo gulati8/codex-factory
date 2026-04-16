@@ -20,6 +20,7 @@ import {
 } from "./adapters/slack.js";
 import { HealthPatrol } from "./services/health-patrol.js";
 import { ArtifactStore } from "./services/artifact-store.js";
+import { GitHubDeliveryService } from "./services/github-delivery-service.js";
 import { MissionQueue } from "./services/mission-queue.js";
 import { MissionService } from "./services/mission-service.js";
 import { Planner } from "./services/planner.js";
@@ -132,6 +133,7 @@ export async function buildApp() {
   const slackIdentityService = new SlackIdentityService(config);
   const slackNotifier = new SlackNotifier(config, slackIdentityService);
 
+  let deliveryService: GitHubDeliveryService | null = null;
   const missionService = new MissionService({
     store,
     policyEngine: new PolicyEngine(),
@@ -149,8 +151,18 @@ export async function buildApp() {
       } catch (error) {
         app.log.error({ err: error, missionId: mission.id, eventType: event.type }, "Slack notification failed");
       }
+
+      if (deliveryService && event.type === "stage.completed" && mission.status === "completed") {
+        try {
+          const manifest = manifestStore.get(mission.projectId);
+          await deliveryService.deliverMission(mission, manifest);
+        } catch (error) {
+          app.log.error({ err: error, missionId: mission.id }, "GitHub delivery failed");
+        }
+      }
     },
   });
+  deliveryService = new GitHubDeliveryService(config, missionService);
   const workerRuntime = new WorkerRuntime(config);
   const artifactStore = new ArtifactStore(config);
   const queue = new MissionQueue({
@@ -177,6 +189,7 @@ export async function buildApp() {
     };
   });
   queue.start();
+  await deliveryService.reconcileCompletedMissions(manifestStore.list());
   app.addHook("onClose", async () => {
     await queue.stop();
     await store.close();

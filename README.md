@@ -83,10 +83,10 @@ Interactive mission cards support:
 curl -X POST http://localhost:4000/api/missions \
   -H 'content-type: application/json' \
   -d '{
-    "projectId": "client-portal",
-    "title": "Add audit trail endpoint",
-    "request": "Add an audit trail endpoint for billing actions and update the API docs",
-    "changedPaths": ["src/payments/ledger.ts", "src/api/audit.ts", "docs/audit.md"],
+    "projectId": "codex-factory",
+    "title": "Harden the deploy workflow",
+    "request": "Tighten the deploy workflow permissions and document the rollout path",
+    "changedPaths": [".github/workflows/deploy.yml", "README.md", "deploy/server-deploy.sh"],
     "autonomyMode": "managed",
     "actor": "amit"
   }'
@@ -134,13 +134,13 @@ curl -X POST http://localhost:4000/api/missions/<mission-id>/stages/<stage-id>/e
 If you are using HTTP delivery, point a slash command to `POST /slack/commands/intake` and send:
 
 ```text
-client-portal Add audit trail endpoint for billing actions
+codex-factory Harden the deploy workflow permissions and document the rollout path
 ```
 
 Supported commands:
 
 ```text
-client-portal Add audit trail endpoint for billing actions
+codex-factory Harden the deploy workflow permissions and document the rollout path
 status mission_123
 approve mission_123
 retry mission_123 implement_lane_1

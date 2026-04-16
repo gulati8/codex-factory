@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { injectGitHubToken, parseGitHubRepo } from "../src/services/github-delivery-service.js";
+import type { StageRun } from "../src/domain/types.js";
+import { injectGitHubToken, parseGitHubRepo, selectDeliveryPathWinners } from "../src/services/github-delivery-service.js";
+
+function makeStageRun(input: Partial<StageRun> & Pick<StageRun, "stageId" | "stageKind">): StageRun {
+  return {
+    missionId: "mission_test",
+    stageId: input.stageId,
+    stageKind: input.stageKind,
+    status: "completed",
+    attempt: 1,
+    startedAt: input.startedAt ?? "2026-04-16T18:00:00.000Z",
+    finishedAt: input.finishedAt ?? "2026-04-16T18:00:10.000Z",
+    worktreePath: input.worktreePath ?? "/tmp/worktree",
+    artifactDir: input.artifactDir ?? "/tmp/artifacts",
+    summary: input.summary ?? `${input.stageKind} done`,
+  };
+}
 
 describe("GitHubDeliveryService helpers", () => {
   it("parses GitHub HTTPS and SSH remotes", () => {
@@ -22,5 +38,40 @@ describe("GitHubDeliveryService helpers", () => {
     expect(injectGitHubToken("https://github.com/gulati8/codex-factory.git", "secret-token")).toBe(
       "https://x-access-token:secret-token@github.com/gulati8/codex-factory.git",
     );
+  });
+
+  it("keeps only the latest authoritative stage for overlapping paths", () => {
+    const implement = makeStageRun({
+      stageId: "implement_1",
+      stageKind: "implement",
+      finishedAt: "2026-04-16T18:01:00.000Z",
+    });
+    const docs = makeStageRun({
+      stageId: "docs_1",
+      stageKind: "docs",
+      finishedAt: "2026-04-16T18:02:00.000Z",
+    });
+
+    const selections = selectDeliveryPathWinners([
+      {
+        stageRun: implement,
+        changedPaths: ["README.md", "src/app.ts"],
+      },
+      {
+        stageRun: docs,
+        changedPaths: ["README.md"],
+      },
+    ]);
+
+    expect(selections).toEqual([
+      {
+        stageRun: implement,
+        selectedPaths: ["src/app.ts"],
+      },
+      {
+        stageRun: docs,
+        selectedPaths: ["README.md"],
+      },
+    ]);
   });
 });

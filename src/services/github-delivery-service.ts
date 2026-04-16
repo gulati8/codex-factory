@@ -22,6 +22,16 @@ type PullRequest = {
   state: string;
 };
 
+type DeliveryPathCandidate = {
+  stageRun: StageRun;
+  changedPaths: string[];
+};
+
+type DeliveryPathSelection = {
+  stageRun: StageRun;
+  selectedPaths: string[];
+};
+
 function stagePriority(stageKind: StageRun["stageKind"]): number {
   switch (stageKind) {
     case "implement":
@@ -62,6 +72,55 @@ export function parseGitHubRepo(remoteUrl: string): GitHubRepo | null {
 
 export function injectGitHubToken(remoteUrl: string, token: string): string {
   return remoteUrl.replace("https://github.com/", `https://x-access-token:${token}@github.com/`);
+}
+
+export function selectDeliveryPathWinners(candidates: DeliveryPathCandidate[]): DeliveryPathSelection[] {
+  const claimedPaths = new Set<string>();
+  const selected: DeliveryPathSelection[] = [];
+  const orderedCandidates = [...candidates].sort((left, right) => {
+    const leftFinishedAt = left.stageRun.finishedAt ?? left.stageRun.startedAt;
+    const rightFinishedAt = right.stageRun.finishedAt ?? right.stageRun.startedAt;
+    const finishedDelta = rightFinishedAt.localeCompare(leftFinishedAt);
+    if (finishedDelta !== 0) {
+      return finishedDelta;
+    }
+
+    const kindDelta = stagePriority(right.stageRun.stageKind) - stagePriority(left.stageRun.stageKind);
+    if (kindDelta !== 0) {
+      return kindDelta;
+    }
+
+    return right.stageRun.stageId.localeCompare(left.stageRun.stageId);
+  });
+
+  for (const candidate of orderedCandidates) {
+    const selectedPaths = candidate.changedPaths.filter((changedPath) => {
+      if (claimedPaths.has(changedPath)) {
+        return false;
+      }
+
+      claimedPaths.add(changedPath);
+      return true;
+    });
+
+    if (selectedPaths.length === 0) {
+      continue;
+    }
+
+    selected.push({
+      stageRun: candidate.stageRun,
+      selectedPaths,
+    });
+  }
+
+  return selected.sort((left, right) => {
+    const kindDelta = stagePriority(left.stageRun.stageKind) - stagePriority(right.stageRun.stageKind);
+    if (kindDelta !== 0) {
+      return kindDelta;
+    }
+
+    return left.stageRun.startedAt.localeCompare(right.stageRun.startedAt);
+  });
 }
 
 export class GitHubDeliveryService {
@@ -159,8 +218,8 @@ export class GitHubDeliveryService {
       };
     }
 
-    const stageRuns = this.selectDeliveryStageRuns(mission.id);
-    if (stageRuns.length === 0) {
+    const deliverySelections = await this.selectDeliveryStageRuns(mission.id);
+    if (deliverySelections.length === 0) {
       throw new Error("No completed delivery stage outputs were available to publish.");
     }
 
@@ -181,13 +240,13 @@ export class GitHubDeliveryService {
         maxBuffer: 1024 * 1024,
       });
 
-      for (const stageRun of stageRuns) {
-        const patch = await this.buildPatch(stageRun);
+      for (const selection of deliverySelections) {
+        const patch = await this.buildPatch(selection.stageRun, selection.selectedPaths);
         if (!patch.trim()) {
           continue;
         }
 
-        const patchPath = path.join(deliveryDir, `${stageRun.stageId}.patch`);
+        const patchPath = path.join(deliveryDir, `${selection.stageRun.stageId}.patch`);
         await writeFile(patchPath, patch, "utf8");
         await execFileAsync("git", ["-C", deliveryDir, "apply", "--3way", "--whitespace=nowarn", patchPath], {
           timeout: this.config.STAGE_TIMEOUT_MS,
@@ -232,7 +291,7 @@ export class GitHubDeliveryService {
         title: `Factory mission: ${mission.title}`,
         head: branch,
         base: baseBranch,
-        body: this.buildPullRequestBody(mission, stageRuns, events),
+        body: this.buildPullRequestBody(mission, deliverySelections, events),
       });
 
       return {
@@ -246,7 +305,7 @@ export class GitHubDeliveryService {
     }
   }
 
-  private selectDeliveryStageRuns(missionId: string): StageRun[] {
+  private async selectDeliveryStageRuns(missionId: string): Promise<DeliveryPathSelection[]> {
     const stageRuns = this.missionService.listStageRuns(missionId);
     const latestCompletedByStage = new Map<string, StageRun>();
     for (const stageRun of stageRuns) {
@@ -260,22 +319,40 @@ export class GitHubDeliveryService {
       }
     }
 
-    return [...latestCompletedByStage.values()].sort((left, right) => {
-      const kindDelta = stagePriority(left.stageKind) - stagePriority(right.stageKind);
-      if (kindDelta !== 0) {
-        return kindDelta;
+    const candidates: DeliveryPathCandidate[] = [];
+    for (const stageRun of latestCompletedByStage.values()) {
+      const changedPaths = await this.listChangedPaths(stageRun);
+      if (changedPaths.length === 0) {
+        continue;
       }
 
-      return left.startedAt.localeCompare(right.startedAt);
-    });
+      candidates.push({
+        stageRun,
+        changedPaths,
+      });
+    }
+
+    return selectDeliveryPathWinners(candidates);
   }
 
-  private async buildPatch(stageRun: StageRun): Promise<string> {
-    const result = await execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--binary", "HEAD"], {
+  private async buildPatch(stageRun: StageRun, changedPaths: string[]): Promise<string> {
+    const result = await execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--binary", "HEAD", "--", ...changedPaths], {
       timeout: this.config.STAGE_TIMEOUT_MS,
       maxBuffer: 1024 * 1024 * 8,
     });
     return result.stdout;
+  }
+
+  private async listChangedPaths(stageRun: StageRun): Promise<string[]> {
+    const result = await execFileAsync("git", ["-C", stageRun.worktreePath, "diff", "--name-only", "HEAD"], {
+      timeout: this.config.STAGE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
   }
 
   private async getRemoteUrl(repoPath: string): Promise<string> {
@@ -335,8 +412,13 @@ export class GitHubDeliveryService {
     return (await response.json()) as PullRequest;
   }
 
-  private buildPullRequestBody(mission: Mission, stageRuns: StageRun[], events: MissionEvent[]): string {
-    const stageSummary = stageRuns.map((stageRun) => `- ${stageRun.stageKind}: ${stageRun.summary}`).join("\n");
+  private buildPullRequestBody(mission: Mission, selections: DeliveryPathSelection[], events: MissionEvent[]): string {
+    const stageSummary = selections
+      .map(
+        (selection) =>
+          `- ${selection.stageRun.stageKind}: ${selection.stageRun.summary} (${selection.selectedPaths.join(", ")})`,
+      )
+      .join("\n");
     const eventCount = events.length;
     return [
       `## Mission`,

@@ -84,7 +84,12 @@ export class WorkspaceManager {
       cwd: workspacePath,
       timeout: this.config.STAGE_TIMEOUT_MS,
       maxBuffer: 1024 * 1024,
-      env: process.env,
+      env: {
+        ...process.env,
+        NODE_ENV: "development",
+        NPM_CONFIG_PRODUCTION: "false",
+        npm_config_production: "false",
+      },
     });
   }
 }

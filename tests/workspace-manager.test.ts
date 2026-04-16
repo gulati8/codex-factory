@@ -118,4 +118,78 @@ describe("WorkspaceManager", () => {
     expect(await readFile(path.join(lease.path, "README.md"), "utf8")).toBe("hello\n");
     await expect(readFile(path.join(lease.path, "STALE.txt"), "utf8")).rejects.toThrow();
   });
+
+  it("installs dependencies with development npm settings in worker worktrees", async () => {
+    const repoPath = path.join(tmpDir, "repo");
+    const worktreePath = path.join(tmpDir, "worktrees", "mission_2", "qa_1");
+    await execFileAsync("git", ["init", repoPath]);
+    await execFileAsync("git", ["-C", repoPath, "config", "user.name", "Codex Factory"]);
+    await execFileAsync("git", ["-C", repoPath, "config", "user.email", "factory@example.com"]);
+    await writeFile(path.join(repoPath, "README.md"), "hello\n", "utf8");
+    await execFileAsync("git", ["-C", repoPath, "add", "README.md"]);
+    await execFileAsync("git", ["-C", repoPath, "commit", "-m", "init"]);
+
+    const manifest: ProjectManifest = {
+      projectId: "codex-factory",
+      displayName: "Codex Factory",
+      repoPath,
+      runtimeContainer: "node:22-bookworm-slim",
+      maxParallelWorkers: 2,
+      commands: {
+        install:
+          "node -e \"require('node:fs').writeFileSync('install-env.json', JSON.stringify({NODE_ENV: process.env.NODE_ENV, NPM_CONFIG_PRODUCTION: process.env.NPM_CONFIG_PRODUCTION, npm_config_production: process.env.npm_config_production}))\"",
+        lint: "npm run lint",
+        test: "npm run test",
+        build: "npm run build",
+      },
+      approval: {
+        requirePlanApproval: true,
+        allowRiskBasedAutonomy: true,
+        allowFireAndForget: false,
+      },
+      slack: {
+        allowedChannelIds: [],
+        allowedChannels: [],
+        operatorUsers: [],
+        approverUsers: [],
+        responseType: "ephemeral",
+        notifications: {
+          channelIds: [],
+          channelNames: [],
+          events: ["mission.created", "plan.approved", "stage.failed", "stage.retry_scheduled", "stage.escalated"],
+        },
+      },
+      retry: {
+        maxAttempts: 2,
+        retryableStages: ["implement", "review", "docs", "qa", "integrate"],
+      },
+      risk: {
+        highRiskGlobs: ["src/auth/**"],
+        architectureGlobs: ["src/domain/**"],
+        securityGlobs: ["src/auth/**"],
+        docsGlobs: ["docs/**"],
+      },
+    };
+
+    const envelope: WorkerEnvelope = {
+      missionId: "mission_2",
+      stageId: "qa_1",
+      stageKind: "qa",
+      workerHint: "qa-worker",
+      repoPath,
+      worktreePath,
+      containerImage: "node:22-bookworm-slim",
+      successCriteria: [],
+    };
+
+    const manager = new WorkspaceManager(config);
+    const lease = await manager.prepare(manifest, envelope);
+    const installEnv = JSON.parse(await readFile(path.join(lease.path, "install-env.json"), "utf8"));
+
+    expect(installEnv).toMatchObject({
+      NODE_ENV: "development",
+      NPM_CONFIG_PRODUCTION: "false",
+      npm_config_production: "false",
+    });
+  });
 });

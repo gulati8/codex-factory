@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import type { AppConfig } from "../config.js";
 import type { ProjectManifest } from "../domain/types.js";
 import type { WorkerEnvelope } from "./worker-runtime.js";
 
@@ -14,11 +15,18 @@ export type WorkspaceLease = {
 };
 
 export class WorkspaceManager {
+  private readonly config: AppConfig;
+
+  public constructor(config: AppConfig) {
+    this.config = config;
+  }
+
   public async prepare(manifest: ProjectManifest, envelope: WorkerEnvelope): Promise<WorkspaceLease> {
     await mkdir(path.dirname(envelope.worktreePath), { recursive: true });
 
     if (await this.hasGitRepo(manifest.repoPath)) {
       await execFileAsync("git", ["-C", manifest.repoPath, "worktree", "add", "--detach", envelope.worktreePath, "HEAD"]);
+      await this.installDependencies(manifest, envelope.worktreePath);
       return {
         path: envelope.worktreePath,
         mode: "git-worktree",
@@ -50,5 +58,19 @@ export class WorkspaceManager {
     } catch {
       return false;
     }
+  }
+
+  private async installDependencies(manifest: ProjectManifest, workspacePath: string): Promise<void> {
+    const command = manifest.commands.install.trim();
+    if (!command) {
+      return;
+    }
+
+    await execFileAsync("bash", ["-lc", command], {
+      cwd: workspacePath,
+      timeout: this.config.STAGE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+      env: process.env,
+    });
   }
 }

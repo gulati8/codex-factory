@@ -29,7 +29,7 @@ export class WorkerLauncher {
     this.store = params.store;
     this.workerRuntime = params.workerRuntime;
     this.artifactStore = new ArtifactStore(params.config);
-    this.workspaceManager = new WorkspaceManager();
+    this.workspaceManager = new WorkspaceManager(params.config);
     this.executor = new StageExecutor(params.config);
   }
 

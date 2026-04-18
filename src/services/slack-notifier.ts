@@ -52,12 +52,24 @@ export class SlackNotifier {
       ...missionCard.blocks,
     ];
 
+    const failures: Error[] = [];
+    let delivered = false;
+
     for (const channel of channels) {
-      await this.postMessage({
-        channel,
-        text: `${manifest.displayName}: ${event.summary}`,
-        blocks,
-      });
+      try {
+        await this.postMessage({
+          channel,
+          text: `${manifest.displayName}: ${event.summary}`,
+          blocks,
+        });
+        delivered = true;
+      } catch (error) {
+        failures.push(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+
+    if (!delivered && failures.length > 0) {
+      throw failures[0];
     }
   }
 
@@ -73,9 +85,14 @@ export class SlackNotifier {
 
     for (const channelName of manifest.slack.notifications.channelNames) {
       const resolved = await this.slackIdentityService?.resolveChannelName(channelName);
-      const target = resolved?.id ?? resolved?.name ?? channelName.trim().replace(/^#/, "");
-      if (target) {
-        targets.add(target);
+      if (resolved?.id) {
+        targets.add(resolved.id);
+        continue;
+      }
+
+      const fallbackName = resolved?.name ?? channelName.trim().replace(/^#/, "");
+      if (!this.token && fallbackName) {
+        targets.add(fallbackName);
       }
     }
 

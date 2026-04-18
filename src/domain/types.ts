@@ -145,6 +145,63 @@ export const agentRunnerSchema = z.object({
 });
 export type AgentRunnerConfig = z.infer<typeof agentRunnerSchema>;
 
+export const slackPolicySchema = z
+  .object({
+    allowedChannelIds: z.array(z.string()).default([]),
+    allowedChannels: z.array(z.string()).default([]),
+    operatorUsers: z.array(z.string()).default([]),
+    approverUsers: z.array(z.string()).default([]),
+    responseType: z.enum(["ephemeral", "in_channel"]).default("ephemeral"),
+    notifications: z
+      .object({
+        channelIds: z.array(z.string()).default([]),
+        channelNames: z.array(z.string()).default([]),
+        events: z.array(missionEventSchema.shape.type).default([
+          "mission.created",
+          "mission.pr_opened",
+          "mission.delivery_failed",
+          "plan.approved",
+          "stage.failed",
+          "stage.retry_scheduled",
+          "stage.escalated",
+        ]),
+      })
+      .default({
+        channelIds: [],
+        channelNames: [],
+        events: [
+          "mission.created",
+          "mission.pr_opened",
+          "mission.delivery_failed",
+          "plan.approved",
+          "stage.failed",
+          "stage.retry_scheduled",
+          "stage.escalated",
+        ],
+      }),
+  })
+  .default({
+    allowedChannelIds: [],
+    allowedChannels: [],
+    operatorUsers: [],
+    approverUsers: [],
+    responseType: "ephemeral",
+    notifications: {
+      channelIds: [],
+      channelNames: [],
+      events: [
+        "mission.created",
+        "mission.pr_opened",
+        "mission.delivery_failed",
+        "plan.approved",
+        "stage.failed",
+        "stage.retry_scheduled",
+        "stage.escalated",
+      ],
+    },
+  });
+export type SlackPolicy = z.infer<typeof slackPolicySchema>;
+
 export const projectManifestSchema = z.object({
   projectId: z.string(),
   displayName: z.string(),
@@ -162,61 +219,7 @@ export const projectManifestSchema = z.object({
     allowRiskBasedAutonomy: z.boolean(),
     allowFireAndForget: z.boolean(),
   }),
-  slack: z
-    .object({
-      allowedChannelIds: z.array(z.string()).default([]),
-      allowedChannels: z.array(z.string()).default([]),
-      operatorUsers: z.array(z.string()).default([]),
-      approverUsers: z.array(z.string()).default([]),
-      responseType: z.enum(["ephemeral", "in_channel"]).default("ephemeral"),
-      notifications: z
-        .object({
-          channelIds: z.array(z.string()).default([]),
-          channelNames: z.array(z.string()).default([]),
-          events: z.array(missionEventSchema.shape.type).default([
-            "mission.created",
-            "mission.pr_opened",
-            "mission.delivery_failed",
-            "plan.approved",
-            "stage.failed",
-            "stage.retry_scheduled",
-            "stage.escalated",
-          ]),
-        })
-        .default({
-          channelIds: [],
-          channelNames: [],
-          events: [
-            "mission.created",
-            "mission.pr_opened",
-            "mission.delivery_failed",
-            "plan.approved",
-            "stage.failed",
-            "stage.retry_scheduled",
-            "stage.escalated",
-          ],
-        }),
-    })
-    .default({
-      allowedChannelIds: [],
-      allowedChannels: [],
-      operatorUsers: [],
-      approverUsers: [],
-      responseType: "ephemeral",
-      notifications: {
-        channelIds: [],
-        channelNames: [],
-        events: [
-          "mission.created",
-          "mission.pr_opened",
-          "mission.delivery_failed",
-          "plan.approved",
-          "stage.failed",
-          "stage.retry_scheduled",
-          "stage.escalated",
-        ],
-      },
-    }),
+  slack: slackPolicySchema,
   agentRunner: agentRunnerSchema.optional(),
   retry: z
     .object({
@@ -235,6 +238,59 @@ export const projectManifestSchema = z.object({
   }),
 });
 export type ProjectManifest = z.infer<typeof projectManifestSchema>;
+
+export const projectStatusSchema = z.enum(["pending_access", "pending_approval", "active", "failed"]);
+export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+
+export const projectAccessSchema = z.object({
+  repoUrl: z.string(),
+  clonePath: z.string(),
+  defaultBranch: z.string().nullable().default(null),
+  validationStatus: z.enum(["unknown", "accessible", "inaccessible"]).default("unknown"),
+  lastValidatedAt: z.string().nullable().default(null),
+  remediation: z.string().nullable().default(null),
+});
+export type ProjectAccess = z.infer<typeof projectAccessSchema>;
+
+export const projectBindingSchema = z.object({
+  defaultChannelId: z.string().nullable().default(null),
+  defaultChannelName: z.string().nullable().default(null),
+});
+export type ProjectBinding = z.infer<typeof projectBindingSchema>;
+
+export const projectInferenceSchema = z.object({
+  confidence: z.number().min(0).max(1).default(0),
+  notes: z.array(z.string()).default([]),
+});
+export type ProjectInference = z.infer<typeof projectInferenceSchema>;
+
+export const projectRecordSchema = z.object({
+  projectId: z.string(),
+  status: projectStatusSchema,
+  manifest: projectManifestSchema,
+  access: projectAccessSchema,
+  binding: projectBindingSchema.default({
+    defaultChannelId: null,
+    defaultChannelName: null,
+  }),
+  inference: projectInferenceSchema.default({
+    confidence: 0,
+    notes: [],
+  }),
+  createdBy: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectRecord = z.infer<typeof projectRecordSchema>;
+
+export const connectProjectInputSchema = z.object({
+  repoUrl: z.string().min(1),
+  actor: z.string(),
+  actorCandidates: z.array(z.string()).default([]),
+  channelId: z.string().optional(),
+  channelName: z.string().optional(),
+});
+export type ConnectProjectInput = z.infer<typeof connectProjectInputSchema>;
 
 export const createMissionInputSchema = z.object({
   projectId: z.string(),

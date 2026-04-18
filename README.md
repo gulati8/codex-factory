@@ -6,7 +6,7 @@
 
 - Fastify service with JSON APIs and a lightweight dashboard
 - File-backed or Postgres-backed mission and event store with explicit state transitions
-- Project manifests as the stable per-repo contract
+- Project manifests as the bootstrap contract for DB-backed projects
 - Policy engine for risk-based routing
 - Planner that compiles workstreams into an execution graph
 - Worker envelope generation for isolated worktrees and containers
@@ -16,6 +16,7 @@
 - Automatic and manual retry paths for bounded stage recovery
 - Slack slash-command intake endpoint
 - Slack Socket Mode bridge that forwards slash commands and interactive actions into the same control-plane routes
+- Dynamic Slack-native project onboarding with repo access checks and inferred config approval
 - Health patrol for stale or silent worker detection
 
 ## Why it is shaped this way
@@ -46,7 +47,7 @@ Open:
 
 ## External runner contract
 
-Each project manifest can optionally declare an `agentRunner`. When enabled for a stage kind, the service:
+Each project manifest can optionally declare an `agentRunner`. In practice, active projects are now stored in Postgres as project records and continue to expose a manifest-shaped runtime contract. When enabled for a stage kind, the service:
 
 - writes `mission-packet.json` and `stage-prompt.md` into the stage artifact directory
 - launches the configured command inside the leased workspace
@@ -64,9 +65,12 @@ If `slack.notifications.channelIds` or `slack.notifications.channelNames` is con
 
 Supported slash command forms:
 
+- `connect <github-url>`
 - `<projectId> <request>`
+- `<request>` inside a bound project channel
 - `status <missionId>`
 - `approve <missionId>`
+- `approve-project <projectId>`
 - `retry <missionId> <stageId>`
 - `escalate <missionId> <stageId> <summary...>`
 
@@ -147,7 +151,7 @@ retry mission_123 implement_lane_1
 escalate mission_123 qa Needs a product call before continuing
 ```
 
-Per-project Slack policy now lives in the manifest:
+Per-project Slack policy now lives in the project record's manifest-shaped config:
 
 - `slack.allowedChannelIds`: optional allow-list for channel ids
 - `slack.allowedChannels`: optional allow-list for channel names
@@ -158,7 +162,15 @@ Per-project Slack policy now lives in the manifest:
 - `slack.notifications.channelNames`: optional outbound notification channel names; resolved through the Slack bot token when available
 - `slack.notifications.events`: which mission events should generate outbound Slack posts
 
-The endpoint creates a managed mission for the named project, returns a terse Slack-friendly summary, and the queue can begin execution as soon as approval gates are satisfied.
+The endpoint creates a managed mission for the named project, or if the channel is already bound to an active project it treats the full message as the request for that project. `connect <github-url>` starts onboarding by:
+
+- validating repo access with the server's existing git/SSH credentials
+- cloning or refreshing the repo under `PROJECTS_ROOT/<project-id>`
+- inferring stack-aware install/lint/test/build commands
+- auto-binding the current channel as the project's default home
+- posting one approval card before activation
+
+If access is missing, the bot tells you exactly what to fix and leaves the project in `pending_access`.
 
 ## Production deploy
 
@@ -172,9 +184,15 @@ The repo includes a production compose file and server scripts under `deploy/`:
 The production manifest is `manifests/codex-factory.json`. It assumes:
 
 - the managed repo is mounted at `/workspace/repo`
+- dynamically onboarded repos are cloned under `/workspace/projects`
 - runtime artifacts live under `/workspace/runtime`
 - Slack operator and approver identity is matched by `gulati8@gmail.com`
 - the OpenAI-backed shell runner is enabled for architectural, implementation, review, docs, and security stages
+
+Production env also needs:
+
+- `PROJECTS_ROOT=/workspace/projects`
+- `FACTORY_ADMIN_USERS=<comma-separated Slack identities or emails allowed to onboard repos>`
 
 ## Persistence modes
 

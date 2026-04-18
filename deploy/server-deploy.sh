@@ -7,7 +7,7 @@ COMPOSE_FILE="$REPO_DIR/deploy/docker-compose.prod.yml"
 REPO_URL="${REPO_URL:-https://github.com/gulati8/codex-factory.git}"
 BRANCH="${BRANCH:-main}"
 
-mkdir -p "$APP_ROOT" "$APP_ROOT/data" "$APP_ROOT/runtime" "$APP_ROOT/runtime/worktrees" "$APP_ROOT/runtime/artifacts" "$APP_ROOT/postgres"
+mkdir -p "$APP_ROOT" "$APP_ROOT/data" "$APP_ROOT/runtime" "$APP_ROOT/runtime/worktrees" "$APP_ROOT/runtime/artifacts" "$APP_ROOT/projects" "$APP_ROOT/postgres"
 
 if [ ! -d "$REPO_DIR/.git" ]; then
   rm -rf "$REPO_DIR"

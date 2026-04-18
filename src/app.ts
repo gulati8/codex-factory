@@ -11,6 +11,7 @@ import {
   ensureSlackAuthorized,
   ensureSlackChannelAllowed,
   formatMissionSlackMessage,
+  formatProjectSlackMessage,
   formatSlackHelpMessage,
   parseSlackActionPayload,
   parseSlackActionValue,
@@ -25,6 +26,7 @@ import { MissionQueue } from "./services/mission-queue.js";
 import { MissionService } from "./services/mission-service.js";
 import { Planner } from "./services/planner.js";
 import { PolicyEngine } from "./services/policy-engine.js";
+import { ProjectOnboardingService } from "./services/project-onboarding-service.js";
 import { SlackIdentityService } from "./services/slack-identity-service.js";
 import { SlackNotifier } from "./services/slack-notifier.js";
 import { WorkerLauncher } from "./services/worker-launcher.js";
@@ -122,16 +124,35 @@ function renderDashboard(missions: ReturnType<MissionService["listMissions"]>): 
   </html>`;
 }
 
+function actorCandidatesFromIdentity(identity: {
+  id?: string;
+  username?: string;
+  name?: string;
+  displayName?: string;
+  realName?: string;
+  email?: string;
+}): string[] {
+  return [identity.id, identity.username, identity.name, identity.displayName, identity.realName, identity.email]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim());
+}
+
 export async function buildApp() {
   const config = loadConfig();
   const store = buildStateStore(config);
-  const manifestStore = new ManifestStore(config.MANIFESTS_DIR);
+  const manifestStore = new ManifestStore(config.MANIFESTS_DIR, {
+    postgresUrl: config.STATE_BACKEND === "postgres" ? config.POSTGRES_URL : undefined,
+  });
   await store.init();
   await manifestStore.init();
   const app = Fastify({ logger: true });
   const healthPatrol = new HealthPatrol(config);
   const slackIdentityService = new SlackIdentityService(config);
   const slackNotifier = new SlackNotifier(config, slackIdentityService);
+  const projectOnboarding = new ProjectOnboardingService({
+    config,
+    manifestStore,
+  });
 
   let deliveryService: GitHubDeliveryService | null = null;
   const missionService = new MissionService({
@@ -192,6 +213,7 @@ export async function buildApp() {
   await deliveryService.reconcileCompletedMissions(manifestStore.list());
   app.addHook("onClose", async () => {
     await queue.stop();
+    await manifestStore.close();
     await store.close();
   });
 
@@ -212,6 +234,57 @@ export async function buildApp() {
   app.get("/api/manifests", async () => ({
     manifests: manifestStore.list(),
   }));
+
+  app.get("/api/projects", async () => ({
+    projects: manifestStore.listRecords(),
+  }));
+
+  app.get("/api/projects/:projectId", async (request, reply) => {
+    try {
+      return {
+        project: manifestStore.getRecord((request.params as { projectId: string }).projectId),
+      };
+    } catch (error) {
+      reply.status(404).send({
+        error: error instanceof Error ? error.message : "Project not found",
+      });
+    }
+  });
+
+  app.post("/api/projects/connect", async (request, reply) => {
+    try {
+      const body = request.body as {
+        repoUrl: string;
+        actor: string;
+        actorCandidates?: string[];
+        channelId?: string;
+        channelName?: string;
+      };
+      const project = await projectOnboarding.connect({
+        repoUrl: body.repoUrl,
+        actor: body.actor,
+        actorCandidates: body.actorCandidates ?? [body.actor],
+        channelId: body.channelId,
+        channelName: body.channelName,
+      });
+      reply.status(201).send({ project });
+    } catch (error) {
+      reply.status(400).send({
+        error: error instanceof Error ? error.message : "Unable to connect project",
+      });
+    }
+  });
+
+  app.post("/api/projects/:projectId/approve", async (request, reply) => {
+    try {
+      const project = await projectOnboarding.approve((request.params as { projectId: string }).projectId);
+      reply.send({ project });
+    } catch (error) {
+      reply.status(400).send({
+        error: error instanceof Error ? error.message : "Unable to approve project",
+      });
+    }
+  });
 
   app.get("/api/missions", async () => ({
     missions: missionService.listMissions(),
@@ -439,9 +512,34 @@ export async function buildApp() {
 
       const payload = slackCommandSchema.parse(body);
       const identity = await slackIdentityService.resolveUser(slackIdentityFromCommand(payload));
+      const actorCandidates = actorCandidatesFromIdentity(identity);
+      const channel = await slackIdentityService.resolveChannel(payload.channel_id);
       const [command, ...requestParts] = payload.text.trim().split(/\s+/);
       if (!command) {
         reply.type("application/json").send(formatSlackHelpMessage());
+        return;
+      }
+
+      if (command === "connect") {
+        const repoUrl = requestParts.join(" ").trim();
+        if (!repoUrl) {
+          reply.type("application/json").send(formatSlackHelpMessage());
+          return;
+        }
+
+        const project = await projectOnboarding.connect({
+          repoUrl,
+          actor: actorFromSlack({ user: identity }),
+          actorCandidates,
+          channelId: channel.id,
+          channelName: channel.name,
+        });
+        reply.type("application/json").send(
+          formatProjectSlackMessage({
+            project,
+            responseType: project.manifest.slack.responseType,
+          }),
+        );
         return;
       }
 
@@ -461,7 +559,6 @@ export async function buildApp() {
           return;
         }
         const manifest = manifestStore.get(mission.projectId);
-        const channel = await slackIdentityService.resolveChannel(payload.channel_id);
         ensureSlackChannelAllowed({ channel, manifest });
 
         reply.type("application/json").send(
@@ -487,7 +584,6 @@ export async function buildApp() {
           throw new Error(`Mission ${missionId} not found.`);
         }
         const manifest = manifestStore.get(mission.projectId);
-        const channel = await slackIdentityService.resolveChannel(payload.channel_id);
         ensureSlackChannelAllowed({ channel, manifest });
         ensureSlackAuthorized({ identity, manifest, capability: "approve" });
         const updated = await missionService.approvePlan(missionId, actorFromSlack({ user: identity }));
@@ -498,6 +594,25 @@ export async function buildApp() {
             stageRuns: missionService.listStageRuns(updated.id),
             health: healthPatrol.inspect(updated),
             responseType: manifest.slack.responseType,
+          }),
+        );
+        return;
+      }
+
+      if (command === "approve-project") {
+        const projectId = requestParts[0];
+        if (!projectId) {
+          reply.type("application/json").send(formatSlackHelpMessage());
+          return;
+        }
+
+        const project = manifestStore.getRecord(projectId);
+        ensureSlackAuthorized({ identity, manifest: project.manifest, capability: "approve" });
+        const updatedProject = await projectOnboarding.approve(projectId);
+        reply.type("application/json").send(
+          formatProjectSlackMessage({
+            project: updatedProject,
+            responseType: updatedProject.manifest.slack.responseType,
           }),
         );
         return;
@@ -522,7 +637,6 @@ export async function buildApp() {
           throw new Error("Only failed or blocked stages can be retried from Slack.");
         }
         const manifest = manifestStore.get(mission.projectId);
-        const channel = await slackIdentityService.resolveChannel(payload.channel_id);
         ensureSlackChannelAllowed({ channel, manifest });
         ensureSlackAuthorized({ identity, manifest, capability: "operate" });
         const updated = await missionService.scheduleRetry(
@@ -559,7 +673,6 @@ export async function buildApp() {
           throw new Error(`Stage ${stageId} not found.`);
         }
         const manifest = manifestStore.get(mission.projectId);
-        const channel = await slackIdentityService.resolveChannel(payload.channel_id);
         ensureSlackChannelAllowed({ channel, manifest });
         ensureSlackAuthorized({ identity, manifest, capability: "operate" });
         const summary =
@@ -589,21 +702,34 @@ export async function buildApp() {
         return;
       }
 
-      const projectId = command;
-      if (requestParts.length === 0) {
+      const boundProject = manifestStore.findActiveByChannel(channel);
+      let manifest = boundProject?.manifest;
+      let requestText = payload.text.trim();
+
+      try {
+        manifest = manifestStore.get(command);
+        requestText = requestParts.join(" ").trim();
+      } catch {
+        manifest = boundProject?.manifest;
+        requestText = payload.text.trim();
+      }
+
+      if (!manifest) {
+        throw new Error("No active project is bound to this channel, and the first word did not match a known project id.");
+      }
+
+      if (!requestText) {
         reply.type("application/json").send(formatSlackHelpMessage());
         return;
       }
 
-      const manifest = manifestStore.get(projectId);
-      const channel = await slackIdentityService.resolveChannel(payload.channel_id);
       ensureSlackChannelAllowed({ channel, manifest });
       ensureSlackAuthorized({ identity, manifest, capability: "operate" });
       const mission = await missionService.createMission(
         {
-          projectId,
-          title: requestParts.join(" ").slice(0, 80),
-          request: requestParts.join(" "),
+          projectId: manifest.projectId,
+          title: requestText.slice(0, 80),
+          request: requestText,
           changedPaths: [],
           autonomyMode: "managed",
           actor: actorFromSlack({ user: identity }),
@@ -649,15 +775,39 @@ export async function buildApp() {
         throw new Error("Missing Slack action.");
       }
 
-      const { missionId, stageId } = parseSlackActionValue(action.value);
+      const identity = await slackIdentityService.resolveUser(payload.user);
+      const actor = actorFromSlack({ user: identity });
+      const channel = await slackIdentityService.resolveChannel(payload.channel?.id);
+      const actionValue = parseSlackActionValue(action.value);
+
+      if (action.action_id === "approve_project") {
+        const projectId = actionValue.projectId;
+        if (!projectId) {
+          throw new Error("Missing project id for approval.");
+        }
+        const project = manifestStore.getRecord(projectId);
+        ensureSlackAuthorized({ identity, manifest: project.manifest, capability: "approve" });
+        const updatedProject = await projectOnboarding.approve(projectId);
+        reply.type("application/json").send(
+          formatProjectSlackMessage({
+            project: updatedProject,
+            responseType: updatedProject.manifest.slack.responseType,
+            replaceOriginal: true,
+          }),
+        );
+        return;
+      }
+
+      const missionId = actionValue.missionId;
+      const stageId = actionValue.stageId;
+      if (!missionId) {
+        throw new Error("Missing mission id.");
+      }
       const mission = missionService.getMission(missionId);
       if (!mission) {
         throw new Error("Mission not found.");
       }
       const manifest = manifestStore.get(mission.projectId);
-      const identity = await slackIdentityService.resolveUser(payload.user);
-      const actor = actorFromSlack({ user: identity });
-      const channel = await slackIdentityService.resolveChannel(payload.channel?.id);
       ensureSlackChannelAllowed({ channel, manifest });
 
       if (action.action_id === "approve_plan") {

@@ -11,10 +11,20 @@ const envSchema = z.object({
   MANIFESTS_DIR: z.string().default("./manifests"),
   ARTIFACTS_DIR: z.string().default("./runtime/artifacts"),
   DEFAULT_WORKTREE_ROOT: z.string().default("./runtime/worktrees"),
+  PROJECTS_ROOT: z.string().default("./runtime/projects"),
   DEFAULT_CONTAINER_IMAGE: z.string().default("node:22-bookworm-slim"),
   HEARTBEAT_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(600),
   QUEUE_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
   STAGE_TIMEOUT_MS: z.coerce.number().int().positive().default(900000),
+  FACTORY_ADMIN_USERS: z
+    .string()
+    .default("")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((candidate) => candidate.trim())
+        .filter(Boolean),
+    ),
   SLACK_SOCKET_MODE: z.coerce.boolean().default(false),
   SLACK_COMMAND_NAME: z.string().default("/codex-factory"),
   SLACK_APP_TOKEN: z.string().optional(),

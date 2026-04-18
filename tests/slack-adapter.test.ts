@@ -19,6 +19,7 @@ const baseConfig: AppConfig = {
   MANIFESTS_DIR: "./manifests",
   ARTIFACTS_DIR: "./runtime/artifacts",
   DEFAULT_WORKTREE_ROOT: "./runtime/worktrees",
+  PROJECTS_ROOT: "./runtime/projects",
   DEFAULT_CONTAINER_IMAGE: "node:22-bookworm-slim",
   HEARTBEAT_TIMEOUT_SECONDS: 600,
   QUEUE_POLL_INTERVAL_MS: 2000,
@@ -33,6 +34,7 @@ const baseConfig: AppConfig = {
   SLACK_BOT_TOKEN: undefined,
   SLACK_IDENTITY_CACHE_TTL_SECONDS: 300,
   SLACK_ALLOWED_TIMESTAMP_AGE_SECONDS: 300,
+  FACTORY_ADMIN_USERS: [],
 };
 
 describe("Slack adapter", () => {

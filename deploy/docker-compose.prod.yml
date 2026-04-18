@@ -17,6 +17,7 @@ services:
       - /srv/codex-factory/runtime:/workspace/runtime
       - /srv/codex-factory/projects:/workspace/projects
       - /srv/codex-factory/repo:/workspace/repo
+      - /home/ec2-user/.ssh:/root/.ssh:ro
     networks:
       default: {}
       proxy:

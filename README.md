@@ -193,6 +193,7 @@ Production env also needs:
 
 - `PROJECTS_ROOT=/workspace/projects`
 - `FACTORY_ADMIN_USERS=<comma-separated Slack identities or emails allowed to onboard repos>`
+- an SSH-capable runtime plus a mounted read-only Git identity for private repo access in the app container
 
 ## Persistence modes
 

@@ -214,4 +214,95 @@ describe("SlackNotifier", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("does not fall back to raw channel names when Slack resolution misses", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          channels: [],
+          response_metadata: { next_cursor: "" },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true }),
+      });
+
+    const notifier = new SlackNotifier(config, new SlackIdentityService(config));
+    const event: MissionEvent = {
+      id: "event_name_miss",
+      missionId: mission.id,
+      type: "mission.created",
+      actor: "test",
+      summary: "Mission created for project client-portal.",
+      createdAt: new Date().toISOString(),
+      metadata: {},
+    };
+
+    await notifier.notify({
+      mission,
+      event,
+      manifest: {
+        ...manifest,
+        slack: {
+          ...manifest.slack,
+          notifications: {
+            channelIds: ["C_NOTIFY"],
+            channelNames: ["factory-ops"],
+            events: ["mission.created"],
+          },
+        },
+      },
+      health: [],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, request] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(String(request.body)).toContain("C_NOTIFY");
+    expect(String(request.body)).not.toContain("factory-ops");
+  });
+
+  it("does not fail the notification when a duplicate target errors after one succeeds", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: false, error: "channel_not_found" }),
+      });
+
+    const notifier = new SlackNotifier(config);
+    const event: MissionEvent = {
+      id: "event_partial_success",
+      missionId: mission.id,
+      type: "mission.created",
+      actor: "test",
+      summary: "Mission created for project client-portal.",
+      createdAt: new Date().toISOString(),
+      metadata: {},
+    };
+
+    await expect(
+      notifier.notify({
+        mission,
+        event,
+        manifest: {
+          ...manifest,
+          slack: {
+            ...manifest.slack,
+            notifications: {
+              channelIds: ["C_NOTIFY", "factory-ops"],
+              channelNames: [],
+              events: ["mission.created"],
+            },
+          },
+        },
+        health: [],
+      }),
+    ).resolves.toBeUndefined();
+  });
 });

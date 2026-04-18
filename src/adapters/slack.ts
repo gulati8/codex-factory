@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 import type { AppConfig } from "../config.js";
-import type { Mission, ProjectManifest, StageRun } from "../domain/types.js";
+import type { Mission, ProjectManifest, ProjectRecord, StageRun } from "../domain/types.js";
 import type { HealthIncident } from "../services/health-patrol.js";
 
 type SlackText = {
@@ -123,8 +123,8 @@ export function parseSlackActionPayload(payload: string | undefined): SlackActio
   return JSON.parse(payload) as SlackActionPayload;
 }
 
-export function parseSlackActionValue(value: string): { missionId: string; stageId?: string } {
-  return JSON.parse(value) as { missionId: string; stageId?: string };
+export function parseSlackActionValue(value: string): Record<string, string | undefined> {
+  return JSON.parse(value) as Record<string, string | undefined>;
 }
 
 export function actorFromSlack(payload: { user?: SlackIdentity }): string {
@@ -304,6 +304,89 @@ export function formatMissionSlackMessage(params: {
   };
 }
 
+export function formatProjectSlackMessage(params: {
+  project: ProjectRecord;
+  responseType?: "ephemeral" | "in_channel";
+  replaceOriginal?: boolean;
+}): SlackMessage {
+  const { project, responseType = project.manifest.slack.responseType, replaceOriginal = false } = params;
+  const notes = project.inference.notes.length > 0 ? project.inference.notes.map((note) => `- ${note}`).join("\n") : "- No inference notes.";
+  const repoDetails = [
+    `Repo: \`${project.access.repoUrl}\``,
+    `Clone path: \`${project.access.clonePath}\``,
+    `Status: *${project.status}*`,
+    `Confidence: *${Math.round(project.inference.confidence * 100)}%*`,
+  ].join(" · ");
+
+  const blocks: SlackBlock[] = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Project onboarding: ${project.manifest.displayName}*\n${repoDetails}`,
+      },
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text:
+          `*Inferred commands*\n` +
+          `- install: \`${project.manifest.commands.install}\`\n` +
+          `- lint: \`${project.manifest.commands.lint}\`\n` +
+          `- test: \`${project.manifest.commands.test}\`\n` +
+          `- build: \`${project.manifest.commands.build}\``,
+      },
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Notes*\n${notes}`,
+      },
+    },
+  ];
+
+  if (project.access.remediation) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*What to fix*\n${project.access.remediation}`,
+      },
+    });
+  }
+
+  if (project.status === "pending_approval") {
+    blocks.push({
+      type: "actions",
+      elements: [
+        slackButton("Approve Setup", "approve_project", { projectId: project.projectId }, "primary"),
+      ],
+    });
+  }
+
+  blocks.push({
+    type: "context",
+    elements: [
+      {
+        type: "mrkdwn",
+        text:
+          project.status === "active"
+            ? `Project \`${project.projectId}\` is active. Ask for work in this channel or reference the project id from anywhere.`
+            : `Once approved, ask what work to do next or let the bot propose something.`,
+      },
+    ],
+  });
+
+  return {
+    response_type: responseType,
+    replace_original: replaceOriginal,
+    text: `${project.manifest.displayName} · ${project.status}`,
+    blocks,
+  };
+}
+
 export function formatSlackHelpMessage(): SlackMessage {
   return {
     response_type: "ephemeral",
@@ -314,7 +397,7 @@ export function formatSlackHelpMessage(): SlackMessage {
         text: {
           type: "mrkdwn",
           text:
-            "*Codex Factory*\nUse one of these forms:\n- `<projectId> <request>`\n- `status <missionId>`\n- `approve <missionId>`\n- `retry <missionId> <stageId>`\n- `escalate <missionId> <stageId> <summary>`",
+            "*Codex Factory*\nUse one of these forms:\n- `connect <github-url>`\n- `<projectId> <request>`\n- `<request>` in a bound project channel\n- `status <missionId>`\n- `approve <missionId>`\n- `approve-project <projectId>`\n- `retry <missionId> <stageId>`\n- `escalate <missionId> <stageId> <summary>`",
         },
       },
     ],
@@ -324,7 +407,7 @@ export function formatSlackHelpMessage(): SlackMessage {
 function slackButton(
   label: string,
   actionId: string,
-  value: { missionId: string; stageId?: string },
+  value: Record<string, string | undefined>,
   style?: "primary" | "danger",
 ) {
   return {

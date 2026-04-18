@@ -15,6 +15,7 @@ services:
     volumes:
       - /srv/codex-factory/data:/workspace/data
       - /srv/codex-factory/runtime:/workspace/runtime
+      - /srv/codex-factory/projects:/workspace/projects
       - /srv/codex-factory/repo:/workspace/repo
     networks:
       default: {}

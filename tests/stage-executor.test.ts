@@ -27,6 +27,7 @@ describe("StageExecutor", () => {
       MANIFESTS_DIR: path.join(tmpDir, "manifests"),
       ARTIFACTS_DIR: path.join(tmpDir, "artifacts"),
       DEFAULT_WORKTREE_ROOT: path.join(tmpDir, "worktrees"),
+      PROJECTS_ROOT: path.join(tmpDir, "projects"),
       DEFAULT_CONTAINER_IMAGE: "node:22-bookworm-slim",
       HEARTBEAT_TIMEOUT_SECONDS: 600,
       QUEUE_POLL_INTERVAL_MS: 100,
@@ -41,6 +42,7 @@ describe("StageExecutor", () => {
       SLACK_BOT_TOKEN: undefined,
       SLACK_IDENTITY_CACHE_TTL_SECONDS: 300,
       SLACK_ALLOWED_TIMESTAMP_AGE_SECONDS: 300,
+      FACTORY_ADMIN_USERS: [],
     };
   });
 
